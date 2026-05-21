@@ -36,6 +36,10 @@ app.add_middleware(
 
 app_state = {}
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 @app.on_event("startup")
 async def startup():
     init_db()
@@ -365,7 +369,7 @@ def search_stocks(q: str, db: Session = Depends(get_db), current_user: User = De
 
 # ─── 前端靜態檔案服務 ────────────────────────────────────────────────────────
 
-frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+frontend_path = os.path.join(os.path.dirname(__file__), "dist")
 if os.path.exists(frontend_path):
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_path, "assets")), name="assets")
 
