@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: taiwan-stock-assistant
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: taiwan-stock-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: VAPID_CLAIMS_EMAIL
+        value: twgoddog1230@gmail.com
+    healthCheckPath: /health
+
+databases:
+  - name: taiwan-stock-db
+    databaseName: taiwan_stock
+    user: taiwan_stock
