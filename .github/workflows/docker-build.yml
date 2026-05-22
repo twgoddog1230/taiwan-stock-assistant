@@ -34,10 +34,8 @@ jobs:
           tags: ghcr.io/twgoddog1230/taiwan-stock-assistant:latest
 
       - name: Trigger Railway redeploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          curl -s -X POST https://backboard.railway.app/graphql/v2 \
-            -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "query": "mutation { serviceInstanceDeploy(serviceId: \"cc2b7ca3-191e-4ade-a998-39d3f977a841\", environmentId: \"a2634237-1b24-48ce-8bde-ef2ede621d48\") }"
-            }'
+          npm install -g @railway/cli --silent
+          railway redeploy --yes --service taiwan-stock-assistant
