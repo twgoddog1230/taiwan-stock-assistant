@@ -1,46 +1,39 @@
 import yfinance as yf
 import feedparser
 import requests
-import io
-import csv
-from datetime import datetime, date, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
 
-_STOOQ_MAP = {
-    "sp500": "^spx",
-    "nasdaq": "^ndx",
-    "sox": "^sox",
-    "vix": "^vix",
-    "usd_twd": "usd.twd",
+_YF_SYMBOLS = {"sp500": "^GSPC", "nasdaq": "^IXIC", "sox": "^SOX", "vix": "^VIX", "usd_twd": "TWD=X"}
+
+_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json",
 }
 
-def _fetch_stooq(stooq_sym: str) -> dict:
+def _fetch_yahoo_v8(symbol: str) -> dict:
+    """直接呼叫 Yahoo Finance v8 chart API（不依賴 yfinance 函式庫）"""
     try:
-        today = date.today()
-        start = (today - timedelta(days=7)).strftime("%Y%m%d")
-        end = today.strftime("%Y%m%d")
-        url = f"https://stooq.com/q/d/l/?s={stooq_sym}&d1={start}&d2={end}&i=d"
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        reader = csv.DictReader(io.StringIO(resp.text))
-        rows = [r for r in reader if r.get("Close") not in (None, "", "null")]
-        if len(rows) >= 2:
-            prev_close = float(rows[-2]["Close"])
-            last_close = float(rows[-1]["Close"])
-            pct = ((last_close - prev_close) / prev_close) * 100
-            return {"close": round(last_close, 2), "change_pct": round(pct, 2)}
-        elif len(rows) == 1:
-            return {"close": round(float(rows[-1]["Close"]), 2), "change_pct": 0.0}
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5d"
+        resp = requests.get(url, headers=_HEADERS, timeout=10)
+        d = resp.json()
+        closes = d["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+        closes = [c for c in closes if c is not None]
+        if len(closes) >= 2:
+            prev, last = closes[-2], closes[-1]
+            pct = ((last - prev) / prev) * 100
+            return {"close": round(last, 2), "change_pct": round(pct, 2)}
+        elif len(closes) == 1:
+            return {"close": round(closes[-1], 2), "change_pct": 0.0}
     except Exception as e:
-        logger.debug(f"Stooq {stooq_sym} 失敗: {e}")
+        logger.debug(f"Yahoo v8 {symbol} 失敗: {e}")
     return {}
 
 def get_us_market_summary() -> dict:
-    """取得美股市場摘要（yfinance 優先，失敗則用 Stooq）"""
-    yf_symbols = {"sp500": "^GSPC", "nasdaq": "^IXIC", "sox": "^SOX", "vix": "^VIX", "usd_twd": "TWD=X"}
+    """取得美股市場摘要（yfinance 優先，失敗則用 Yahoo Finance v8 API）"""
     data = {}
-    for key, sym in yf_symbols.items():
+    for key, sym in _YF_SYMBOLS.items():
         try:
             ticker = yf.Ticker(sym)
             hist = ticker.history(period="3d")
@@ -55,13 +48,12 @@ def get_us_market_summary() -> dict:
                 continue
         except Exception:
             pass
-        # yfinance 失敗，改用 Stooq
-        result = _fetch_stooq(_STOOQ_MAP[key])
+        result = _fetch_yahoo_v8(sym)
         if result:
             data[key] = result
-            logger.info(f"{key} 改由 Stooq 取得: {result}")
+            logger.info(f"{key} 改由 Yahoo v8 API 取得: {result}")
         else:
-            logger.warning(f"{key} yfinance 與 Stooq 均失敗")
+            logger.warning(f"{key} yfinance 與 Yahoo v8 API 均失敗")
 
     return data
 
