@@ -38,4 +38,6 @@ jobs:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
           npm install -g @railway/cli --silent
-          railway redeploy --yes --service taiwan-stock-assistant
+          for i in 1 2 3 4 5 6; do
+            railway redeploy --yes --service taiwan-stock-assistant && break || sleep 10
+          done || echo "Warning: Railway redeploy may need manual trigger"
