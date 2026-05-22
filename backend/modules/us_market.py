@@ -1,31 +1,67 @@
 import yfinance as yf
 import feedparser
 import requests
-from datetime import datetime, date
+import io
+import csv
+from datetime import datetime, date, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
 
-def get_us_market_summary() -> dict:
-    """取得美股市場摘要，用於盤前分析"""
-    data = {}
+_STOOQ_MAP = {
+    "sp500": "^spx",
+    "nasdaq": "^ndx",
+    "sox": "^sox",
+    "vix": "^vix",
+    "usd_twd": "usd.twd",
+}
+
+def _fetch_stooq(stooq_sym: str) -> dict:
     try:
-        symbols = {"sp500": "^GSPC", "nasdaq": "^IXIC", "sox": "^SOX", "vix": "^VIX", "usd_twd": "TWD=X"}
-        for key, sym in symbols.items():
-            try:
-                ticker = yf.Ticker(sym)
-                hist = ticker.history(period="3d")
-                if len(hist) >= 2:
-                    prev = float(hist["Close"].iloc[-2])
-                    last = float(hist["Close"].iloc[-1])
-                    pct = ((last - prev) / prev) * 100
-                    data[key] = {"close": round(last, 2), "change_pct": round(pct, 2)}
-                elif len(hist) == 1:
-                    data[key] = {"close": round(float(hist["Close"].iloc[-1]), 2), "change_pct": 0.0}
-            except Exception:
-                data[key] = {"close": 0, "change_pct": 0}
+        today = date.today()
+        start = (today - timedelta(days=7)).strftime("%Y%m%d")
+        end = today.strftime("%Y%m%d")
+        url = f"https://stooq.com/q/d/l/?s={stooq_sym}&d1={start}&d2={end}&i=d"
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        reader = csv.DictReader(io.StringIO(resp.text))
+        rows = [r for r in reader if r.get("Close") not in (None, "", "null")]
+        if len(rows) >= 2:
+            prev_close = float(rows[-2]["Close"])
+            last_close = float(rows[-1]["Close"])
+            pct = ((last_close - prev_close) / prev_close) * 100
+            return {"close": round(last_close, 2), "change_pct": round(pct, 2)}
+        elif len(rows) == 1:
+            return {"close": round(float(rows[-1]["Close"]), 2), "change_pct": 0.0}
     except Exception as e:
-        logger.error(f"取得美股資料失敗: {e}")
+        logger.debug(f"Stooq {stooq_sym} 失敗: {e}")
+    return {}
+
+def get_us_market_summary() -> dict:
+    """取得美股市場摘要（yfinance 優先，失敗則用 Stooq）"""
+    yf_symbols = {"sp500": "^GSPC", "nasdaq": "^IXIC", "sox": "^SOX", "vix": "^VIX", "usd_twd": "TWD=X"}
+    data = {}
+    for key, sym in yf_symbols.items():
+        try:
+            ticker = yf.Ticker(sym)
+            hist = ticker.history(period="3d")
+            if len(hist) >= 2:
+                prev = float(hist["Close"].iloc[-2])
+                last = float(hist["Close"].iloc[-1])
+                pct = ((last - prev) / prev) * 100
+                data[key] = {"close": round(last, 2), "change_pct": round(pct, 2)}
+                continue
+            elif len(hist) == 1:
+                data[key] = {"close": round(float(hist["Close"].iloc[-1]), 2), "change_pct": 0.0}
+                continue
+        except Exception:
+            pass
+        # yfinance 失敗，改用 Stooq
+        result = _fetch_stooq(_STOOQ_MAP[key])
+        if result:
+            data[key] = result
+            logger.info(f"{key} 改由 Stooq 取得: {result}")
+        else:
+            logger.warning(f"{key} yfinance 與 Stooq 均失敗")
 
     return data
 

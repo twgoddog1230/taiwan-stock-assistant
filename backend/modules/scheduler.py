@@ -59,7 +59,8 @@ def run_post_market_analysis(app_state: dict):
     try:
         from database import SessionLocal
         from models import Stock, DailyAnalysis, MarketSummary
-        from modules.data_collector import get_historical_prices, get_three_major_investors, get_us_market_summary
+        from modules.data_collector import get_historical_prices, get_three_major_investors
+        from modules.us_market import get_us_market_summary
         from modules.technical import calculate_indicators
         from modules.scoring import score_stock, rank_stocks
         import json
