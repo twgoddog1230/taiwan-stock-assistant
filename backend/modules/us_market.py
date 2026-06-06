@@ -5,7 +5,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_YF_SYMBOLS = {"sp500": "^GSPC", "nasdaq": "^IXIC", "sox": "^SOX", "vix": "^VIX", "usd_twd": "TWD=X"}
+_YF_SYMBOLS = {
+    "sp500":   "^GSPC",
+    "nasdaq":  "^IXIC",
+    "sox":     "^SOX",
+    "vix":     "^VIX",
+    "usd_twd": "TWD=X",
+    "tsm_adr": "TSM",   # 台積電 ADR（直接反映台股開盤基調）
+}
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -81,15 +88,15 @@ def score_momentum(us_data: dict) -> dict:
         score += 1
         details.append(f"S&P500 持平 {sp_chg:+.1f}% +1")
 
-    # 費城半導體指數 SOX（台股科技股最重要指標）(0-7分)
+    # 費城半導體指數 SOX（台股科技股最重要指標）(0-5分，調降為5以讓出分數給TSM)
     sox = us_data.get("sox", {})
     sox_chg = sox.get("change_pct", 0)
     if sox_chg > 2.0:
-        score += 7
-        details.append(f"費半大漲 {sox_chg:+.1f}%（利多台灣半導體）+7")
+        score += 5
+        details.append(f"費半大漲 {sox_chg:+.1f}%（利多台灣半導體）+5")
     elif sox_chg > 0.5:
-        score += 4
-        details.append(f"費半上漲 {sox_chg:+.1f}% +4")
+        score += 3
+        details.append(f"費半上漲 {sox_chg:+.1f}% +3")
     elif sox_chg < -2.0:
         score -= 4
         details.append(f"費半大跌 {sox_chg:+.1f}%（利空半導體）-4")
@@ -97,8 +104,24 @@ def score_momentum(us_data: dict) -> dict:
         score -= 2
         details.append(f"費半下跌 {sox_chg:+.1f}% -2")
     else:
-        score += 2
-        details.append(f"費半持平 {sox_chg:+.1f}% +2")
+        score += 1
+        details.append(f"費半持平 {sox_chg:+.1f}% +1")
+
+    # 台積電 ADR（P2 新增，0-3分）—直接反映台股科技股開盤基調
+    tsm = us_data.get("tsm_adr", {})
+    tsm_chg = tsm.get("change_pct", 0)
+    if tsm_chg > 2.0:
+        score += 3
+        details.append(f"台積電ADR大漲 {tsm_chg:+.1f}%（強烈利多）+3")
+    elif tsm_chg > 0.5:
+        score += 1
+        details.append(f"台積電ADR上漲 {tsm_chg:+.1f}% +1")
+    elif tsm_chg < -2.0:
+        score -= 3
+        details.append(f"台積電ADR大跌 {tsm_chg:+.1f}%（強烈利空）-3")
+    elif tsm_chg < -0.5:
+        score -= 1
+        details.append(f"台積電ADR下跌 {tsm_chg:+.1f}% -1")
 
     # VIX 恐慌指數 (0-5分)
     vix = us_data.get("vix", {})
@@ -133,7 +156,19 @@ def score_momentum(us_data: dict) -> dict:
         details.append("匯率穩定 +1")
 
     score = max(0, min(20, score))
-    return {"score": round(score, 1), "details": details}
+    return {"score": round(score, 1), "details": details, "sox_chg": sox_chg, "vix_val": vix_val}
+
+
+def get_position_size_pct(vix_val: float) -> int:
+    """根據VIX恐慌指數建議倉位比例（P2）"""
+    if vix_val < 15:
+        return 100
+    elif vix_val < 20:
+        return 70
+    elif vix_val < 28:
+        return 50
+    else:
+        return 30
 
 def get_news_summary() -> list[dict]:
     """取得財經新聞摘要"""
@@ -158,15 +193,20 @@ def get_news_summary() -> list[dict]:
 
 def generate_pre_market_report(us_data: dict, news: list[dict]) -> str:
     """生成盤前摘要報告"""
-    sp500 = us_data.get("sp500", {})
-    nasdaq = us_data.get("nasdaq", {})
-    sox = us_data.get("sox", {})
-    vix = us_data.get("vix", {})
+    sp500   = us_data.get("sp500", {})
+    nasdaq  = us_data.get("nasdaq", {})
+    sox     = us_data.get("sox", {})
+    vix     = us_data.get("vix", {})
     usd_twd = us_data.get("usd_twd", {})
+    tsm     = us_data.get("tsm_adr", {})
 
-    sp_chg = sp500.get("change_pct", 0)
+    sp_chg  = sp500.get("change_pct", 0)
     sox_chg = sox.get("change_pct", 0)
+    tsm_chg = tsm.get("change_pct", 0)
     vix_val = vix.get("close", 20)
+
+    # VIX 倉位建議
+    position_pct = get_position_size_pct(vix_val)
 
     # 研判市場方向
     if sp_chg > 1 and sox_chg > 1 and vix_val < 20:
@@ -177,14 +217,17 @@ def generate_pre_market_report(us_data: dict, news: list[dict]) -> str:
         strategy = "可正常布局，注意個股籌碼"
     elif sp_chg < -1.5 or vix_val > 28:
         sentiment = "偏空，台股面臨賣壓"
-        strategy = "建議降低倉位，避免追高"
+        strategy = f"建議降低倉位至 {position_pct}%，避免追高"
     else:
         sentiment = "中性偏觀望"
         strategy = "選擇性操作，以強勢個股為主"
 
+    tsm_line = f"🏭 台積電ADR：{tsm_chg:+.1f}%" if tsm else ""
+
     report = f"""【今日盤前摘要】
 🇺🇸 美股收盤：S&P500 {sp_chg:+.1f}%｜NASDAQ {nasdaq.get('change_pct',0):+.1f}%｜費半 {sox_chg:+.1f}%
-😰 恐慌指數：VIX {vix_val:.1f}
+{tsm_line}
+😰 恐慌指數：VIX {vix_val:.1f}｜建議倉位：{position_pct}%
 💵 美元/台幣：{usd_twd.get('close',32):.2f}（{usd_twd.get('change_pct',0):+.2f}%）
 
 📊 市場研判：{sentiment}

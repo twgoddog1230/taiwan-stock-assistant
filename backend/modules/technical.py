@@ -76,6 +76,18 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # 漲跌幅
     df["change_pct"] = close.pct_change() * 100
 
+    # ── 突破訊號 ──────────────────────────────────────────────────────────────
+    # 近20日收盤高點（取前一天為基準，避免用到當天自己）
+    df["high20"] = close.rolling(20).max().shift(1)
+    # 帶量突破：今日收盤 > 前20日高點 且 成交量 > 1.5倍均量
+    df["breakout"] = (close > df["high20"]) & (df["vol_ratio"] > 1.5)
+
+    # 5MA 黃金交叉 20MA（前一天 MA5 ≤ MA20，今天 MA5 > MA20）
+    df["ma5_cross_above_ma20"] = (
+        (df["ma5"] > df["ma20"]) &
+        (df["ma5"].shift(1) <= df["ma20"].shift(1))
+    )
+
     return df
 
 def _calc_rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -145,8 +157,33 @@ def score_technical(df: pd.DataFrame) -> dict:
             score += 2
             details.append("KD 多頭 +2")
 
+    # ── 突破訊號（P1 新增）────────────────────────────────────────────────────
+    breakout = bool(latest.get("breakout", False))
+    if breakout:
+        score += 4
+        details.append("帶量突破20日高點 +4 ▶ 技術突破訊號")
+
+    ma5_golden_cross = bool(latest.get("ma5_cross_above_ma20", False))
+    if ma5_golden_cross:
+        score += 3
+        details.append("5MA黃金交叉20MA +3 ▶ 趨勢翻多")
+
     score = max(0, min(20, score))
-    return {"score": round(score, 1), "details": details}
+
+    # 回傳關鍵數值供 scoring.py Gate 邏輯使用
+    ma20_val = latest.get("ma20")
+    vol_ratio_val = latest.get("vol_ratio", 0)
+    close_val = latest.get("close", 0)
+
+    return {
+        "score": round(score, 1),
+        "details": details,
+        "breakout": breakout,
+        "ma5_golden_cross": ma5_golden_cross,
+        "ma20": float(ma20_val) if pd.notna(ma20_val) else None,
+        "close": float(close_val),
+        "vol_ratio": float(vol_ratio_val),
+    }
 
 def get_technical_signal(df: pd.DataFrame) -> str:
     """判斷技術面買賣訊號"""
